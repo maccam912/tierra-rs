@@ -3,6 +3,14 @@ name = "tierra-rs"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "tierra"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tierra-rs"
+path = "src/main.rs"
+
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
