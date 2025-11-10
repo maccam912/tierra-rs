@@ -71,13 +71,22 @@ impl Organism {
 
     /// Increment the instruction pointer
     pub fn increment_ip(&mut self) {
-        self.ip = self.address + ((self.ip - self.address + 1) % self.size);
+        // Use saturating_sub to prevent overflow if IP is somehow less than address
+        let offset = self.ip.saturating_sub(self.address);
+        self.ip = self.address + ((offset + 1) % self.size);
         self.cycles += 1;
     }
 
     /// Set the instruction pointer to a new address (for jumps)
     pub fn set_ip(&mut self, addr: usize) {
-        self.ip = addr;
+        // Normalize the address to be within the organism's memory bounds
+        if addr >= self.address && addr < self.address + self.size {
+            self.ip = addr;
+        } else {
+            // If out of bounds, wrap it to the organism's memory space
+            let offset = addr % self.size;
+            self.ip = self.address + offset;
+        }
     }
 
     /// Push a value onto the stack
