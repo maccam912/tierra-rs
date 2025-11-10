@@ -125,7 +125,13 @@ impl Memory {
         for _ in 0..100 {
             let start = rng.gen_range(0..self.size);
             if self.is_range_free(start, size) {
+                // Double-check that it's really free before marking
+                debug_assert!(self.is_range_free(start, size),
+                    "BUG: Trying to allocate already-allocated memory at {}", start);
                 self.mark_allocated(start, size, true);
+                // Verify it was marked
+                debug_assert!(!self.is_range_free(start, size),
+                    "BUG: Memory at {} wasn't marked as allocated", start);
                 return Some(start);
             }
         }
@@ -133,7 +139,11 @@ impl Memory {
         // Linear search as fallback
         for start in 0..self.size {
             if self.is_range_free(start, size) {
+                debug_assert!(self.is_range_free(start, size),
+                    "BUG: Trying to allocate already-allocated memory at {}", start);
                 self.mark_allocated(start, size, true);
+                debug_assert!(!self.is_range_free(start, size),
+                    "BUG: Memory at {} wasn't marked as allocated", start);
                 return Some(start);
             }
         }
