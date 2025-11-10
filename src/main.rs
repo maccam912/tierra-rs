@@ -1,13 +1,4 @@
-mod instruction;
-mod memory;
-mod organism;
-mod cpu;
-mod scheduler;
-mod stats;
-mod simulator;
-mod ui;
-
-use ui::TierraApp;
+use tierra::ui::TierraApp;
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {

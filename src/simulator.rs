@@ -108,6 +108,8 @@ impl Simulator {
                         } else {
                             self.organisms[organism_idx].errors += 1;
                         }
+                        // Increment IP after malloc (instruction pointer was not advanced in execute_instruction)
+                        self.organisms[organism_idx].increment_ip();
                     }
                     ExecutionResult::Divide => {
                         self.handle_divide(organism_idx);
@@ -201,6 +203,8 @@ impl Simulator {
             let idx = (current_idx + offset) % self.organisms.len();
             if self.organisms[idx].alive {
                 self.scheduler.current_index = (idx + 1) % self.organisms.len();
+                // Reset energy for the new time slice
+                self.organisms[idx].reset_energy(self.config.time_slice);
                 return Some(idx);
             }
         }
@@ -235,52 +239,112 @@ impl Simulator {
 }
 
 /// Create the ancestor organism - a simple self-replicating program
+/// This is a minimal version that just allocates memory and divides
 fn create_ancestor() -> Vec<Instruction> {
     use Instruction::*;
 
-    vec![
-        // Mark start with template
-        Nop1, Nop1, Nop1, Nop1,
+    // Create a simple ancestor that:
+    // 1. Sets AX to organism size (for MallocA)
+    // 2. Calls MallocA (stores offspring address in BX)
+    // 3. Sets CX to organism size (for Divide)
+    // 4. Calls Divide
+    // handle_divide will copy the parent to offspring location
 
-        // Calculate size of self
-        Adr,      // AX = current address
-        PushA,    // Save it
-        Call,     // Call to end marker
-        Nop0, Nop0, Nop0, Nop0, // Template (complement of end marker)
-        PopB,     // BX = start address
-        Adr,      // AX = current address (after call)
-        PushA,
-        PopC,     // CX = size
+    // Fixed size approach:
+    // 4 (start) + 64 (IncA) + 1 (MallocA) + 2 (PushA/PopC) + 12 (IncC) + 1 (Divide) + 4 (end) = 88
+    // But we want AX to be 88 for the allocation
+    // So we need 88 IncA instructions, making total = 4 + 88 + 1 + 2 + 12 + 1 + 4 = 112
 
-        // Allocate space for offspring
-        MallocA,  // Allocate CX bytes, address in BX
+    // Simpler: hardcode a reasonable size like 80
+    let size = 80;
+    let num_inc_a = size - 1 - 2 - 12 - 1 - 8; // Subtract other instructions
+    let num_inc_c = 12; // Add this to CX to get from AX to actual size
 
-        // Copy self to offspring
-        PushC,    // Save size
-        PopD,     // DX = size
-        Adr,      // Get current address as start of copy loop
-        PushA,
+    let mut instructions = vec![];
 
-        // Copy loop marker
-        Nop0, Nop1, Nop0, Nop1,
+    // Start marker
+    instructions.extend_from_slice(&[Nop1, Nop1, Nop1, Nop1]);
 
-        // Copy one instruction
-        MovDC,    // Read from [CX]
-        MovCD,    // Write to [CX] in offspring
-        IncC,     // Next source
-        DecC,     // Decrement counter in DX (using CX as counter)
+    // Set AX to size - num_inc_c - 8 (for the other instructions)
+    for _ in 0..num_inc_a {
+        instructions.push(IncA);
+    }
 
-        // Loop back if not done
-        PushD,
-        PopC,
-        IfCZ,     // If counter zero, skip jump
-        JmpB,     // Jump back to copy loop
-        Nop1, Nop0, Nop1, Nop0, // Template for copy loop
+    // MallocA - allocate AX bytes, address in BX
+    instructions.push(MallocA);
 
-        // Divide
-        Divide,
+    // Move size from AX to CX for Divide
+    instructions.push(PushA);
+    instructions.push(PopC);
 
-        // End marker
-        Nop0, Nop0, Nop0, Nop0,
-    ]
+    // Add the extra instructions to CX to match actual size
+    for _ in 0..num_inc_c {
+        instructions.push(IncC);
+    }
+
+    // Divide
+    instructions.push(Divide);
+
+    // End marker
+    instructions.extend_from_slice(&[Nop0, Nop0, Nop0, Nop0]);
+
+    instructions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulation_reaches_population_of_two() {
+        let config = SimulationConfig {
+            memory_size: 65536,
+            mutation_rate: 0.0, // No mutations for testing
+            max_population: 200,
+            time_slice: 25,
+        };
+
+        let mut sim = Simulator::new(config);
+        sim.initialize_with_ancestor();
+
+        println!("Starting test...");
+        println!("Ancestor size: {}", sim.organisms[0].size);
+        println!("Ancestor address: {}", sim.organisms[0].address);
+
+        // The simulation should reach a population of at least 2
+        // We'll run for a maximum number of steps to avoid infinite loops
+        let max_steps = 100000;
+        let mut steps = 0;
+
+        while steps < max_steps {
+            sim.step();
+            steps += 1;
+
+            let alive_count = sim.organisms.iter().filter(|o| o.alive).count();
+
+            if alive_count >= 2 {
+                println!("✓ Reached population of {} after {} steps", alive_count, steps);
+                println!("  Total instructions: {}", sim.stats.total_instructions);
+                println!("  Successful replications: {}", sim.stats.successful_replications);
+                println!("  Failed replications: {}", sim.stats.failed_replications);
+                return;
+            }
+
+            // Print progress every 100 steps
+            if steps % 100 == 0 {
+                println!("Step {}: population = {}, instructions = {}",
+                    steps, alive_count, sim.stats.total_instructions);
+                if !sim.organisms.is_empty() {
+                    let org = &sim.organisms[0];
+                    println!("  Organism 0: IP={}, errors={}, cycles={}, energy={}",
+                        org.ip, org.errors, org.cycles, org.energy);
+                    println!("  Registers: AX={}, BX={}, CX={}, DX={}",
+                        org.ax, org.bx, org.cx, org.dx);
+                }
+            }
+        }
+
+        panic!("Simulation did not reach population of 2 after {} steps. Current population: {}",
+            max_steps, sim.organisms.iter().filter(|o| o.alive).count());
+    }
 }
